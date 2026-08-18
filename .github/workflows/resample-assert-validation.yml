@@ -70,3 +70,5 @@ jobs:
           git add src/stcal/resample/resample.py
           git commit -m 'Replace resample runtime asserts with exceptions'
           git push --force origin fix-resample-runtime-invariants
+
+# Temporary fork-only validation workflow.
