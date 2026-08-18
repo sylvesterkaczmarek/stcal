@@ -1,0 +1,260 @@
+name: stcal jump validation
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  snowball-core-axes:
+    runs-on: ubuntu-latest
+    env:
+      BASE: a0bee58c9c564de977a2ece4134f40c50fa495b2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install test environment
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[test]'
+      - name: Build and test snowball core fix
+        run: |
+          git switch -C fix-snowball-core-axes "$BASE"
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/stcal/jump/jump.py")
+          text = path.read_text()
+          old = """        w = region.axis_major_length - 1
+                  h = region.axis_minor_length - 1
+          """
+          new = """        w = region.axis_major_length
+                  h = region.axis_minor_length
+                  if w == 0:
+                      w = 1
+                  if h == 0:
+                      h = 1
+          """
+          assert old in text
+          path.write_text(text.replace(old, new, 1))
+
+          path = Path("tests/test_jump.py")
+          text = path.read_text()
+          old_minor = '    assert ellipse["minor_axis"] == pytest.approx(2.266, 1e-3)'
+          old_major = '    assert ellipse["major_axis"] == pytest.approx(2.266, 1e-3)'
+          assert old_minor in text
+          assert old_major in text
+          text = text.replace(
+              old_minor,
+              '    assert ellipse["minor_axis"] == pytest.approx(3.266, 1e-3)',
+              1,
+          )
+          text = text.replace(
+              old_major,
+              '    assert ellipse["major_axis"] == pytest.approx(3.266, 1e-3)',
+              1,
+          )
+          marker = """def test_find_ellipse2():
+          """
+          test = """def test_find_single_pixel_ellipse():
+              plane = np.zeros(shape=(3, 3), dtype=np.uint8)
+              plane[1, 1] = JUMP
+              ellipse = find_ellipses(plane, JUMP, 1)[0]
+
+              assert (ellipse[\"cen_x\"], ellipse[\"cen_y\"]) == (1, 1)
+              assert ellipse[\"minor_axis\"] == 1
+              assert ellipse[\"major_axis\"] == 1
+
+
+          """
+          assert marker in text
+          path.write_text(text.replace(marker, test + marker, 1))
+          PY
+          python -m pytest -q tests/test_jump.py
+          git config user.name "Sylvester Kaczmarek"
+          git config user.email "16242628+sylvesterkaczmarek@users.noreply.github.com"
+          git add src/stcal/jump/jump.py tests/test_jump.py
+          git commit -m "Fix snowball core ellipse sizes"
+          git push --force origin HEAD:refs/heads/fix-snowball-core-axes
+
+  four-neighbor-flagging:
+    runs-on: ubuntu-latest
+    env:
+      BASE: a0bee58c9c564de977a2ece4134f40c50fa495b2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install test environment
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[test]'
+      - name: Build and test four-neighbor fix
+        run: |
+          git switch -C fix-four-neighbor-flagging "$BASE"
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/stcal/jump/twopoint_difference.py")
+          text = path.read_text()
+          old = """            jump_set = gdq[i, j + 1] & twopt_p.fl_jump != 0
+                      flag = (
+                          (ratio < twopt_p.max_jump_to_flag_neighbors)
+                          & (ratio > twopt_p.min_jump_to_flag_neighbors)
+                          & (jump_set)
+                      )
+          """
+          new = """            flag = (ratio < twopt_p.max_jump_to_flag_neighbors) & (
+                          ratio > twopt_p.min_jump_to_flag_neighbors
+                      )
+          """
+          assert old in text
+          path.write_text(text.replace(old, new, 1))
+
+          path = Path("tests/test_jump_twopoint_difference.py")
+          text = path.read_text()
+          old_import = "from stcal.jump.twopoint_difference import find_crs"
+          new_import = "from stcal.jump.twopoint_difference import find_crs, flag_four_neighbors"
+          assert old_import in text
+          text = text.replace(old_import, new_import, 1)
+          marker = """def test_uneven_groups():
+          """
+          test = """def test_four_neighbor_flagging_uses_jump_amplitude():
+              nints, ngroups, nrows, ncols = 1, 2, 5, 5
+              gdq = np.zeros((nints, ngroups, nrows, ncols), dtype=np.uint32)
+              first_diffs = np.zeros((nints, ngroups - 1, nrows, ncols), dtype=np.float32)
+              first_diffs[0, 0, 2, 2] = 20.0
+              median_diffs = np.zeros((nrows, ncols), dtype=np.float32)
+              sigma = np.ones((1, nrows, ncols), dtype=np.float32)
+              row_below_gdq = np.zeros((nints, ngroups, ncols), dtype=np.uint8)
+              row_above_gdq = np.zeros_like(row_below_gdq)
+              twopt_p = default_twopt_p(_4n=True, mx_flag=200, mn_flag=10)
+
+              out_gdq, _, _ = flag_four_neighbors(
+                  gdq,
+                  nints,
+                  ngroups,
+                  first_diffs,
+                  median_diffs,
+                  sigma,
+                  row_below_gdq,
+                  row_above_gdq,
+                  twopt_p,
+              )
+
+              expected = np.zeros((nrows, ncols), dtype=np.uint32)
+              expected[2, 2] = DQFLAGS[\"JUMP_DET\"]
+              expected[1, 2] = DQFLAGS[\"JUMP_DET\"]
+              expected[3, 2] = DQFLAGS[\"JUMP_DET\"]
+              expected[2, 1] = DQFLAGS[\"JUMP_DET\"]
+              expected[2, 3] = DQFLAGS[\"JUMP_DET\"]
+              np.testing.assert_array_equal(out_gdq[0, 1], expected)
+
+
+          """
+          assert marker in text
+          path.write_text(text.replace(marker, test + marker, 1))
+          PY
+          python -m pytest -q tests/test_jump_twopoint_difference.py
+          git config user.name "Sylvester Kaczmarek"
+          git config user.email "16242628+sylvesterkaczmarek@users.noreply.github.com"
+          git add src/stcal/jump/twopoint_difference.py tests/test_jump_twopoint_difference.py
+          git commit -m "Fix four-neighbor cosmic ray flagging"
+          git push --force origin HEAD:refs/heads/fix-four-neighbor-flagging
+
+  rtn-mad-sigma-clipping:
+    runs-on: ubuntu-latest
+    env:
+      BASE: a0bee58c9c564de977a2ece4134f40c50fa495b2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install test environment
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[test]'
+      - name: Build and test robust sigma clipping
+        run: |
+          git switch -C fix-rtn-mad-sigma-clipping "$BASE"
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/stcal/jump/twopoint_difference.py")
+          text = path.read_text()
+          old_import = "from astropy import stats\nfrom astropy.utils.exceptions import AstropyUserWarning"
+          new_import = "from astropy import stats\nfrom astropy.stats import mad_std\nfrom astropy.utils.exceptions import AstropyUserWarning"
+          assert old_import in text
+          text = text.replace(old_import, new_import, 1)
+          old = """        clipped_diffs, allow, ahigh = stats.sigma_clip(
+                      first_diffs, sigma=twopt_p.normal_rej_thresh, axis=axis, masked=True, return_bounds=True
+                  )
+          """
+          new = """        clipped_diffs, allow, ahigh = stats.sigma_clip(
+                      first_diffs,
+                      sigma=twopt_p.normal_rej_thresh,
+                      axis=axis,
+                      masked=True,
+                      return_bounds=True,
+                      cenfunc=\"median\",
+                      stdfunc=lambda data, axis=None: mad_std(data, axis=axis, ignore_nan=True),
+                  )
+          """
+          assert old in text
+          path.write_text(text.replace(old, new, 1))
+
+          path = Path("tests/test_jump_twopoint_difference.py")
+          text = path.read_text()
+          old_import = "from stcal.jump.twopoint_difference import find_crs"
+          new_import = "from stcal.jump.twopoint_difference import det_jump_sigma_clipping, find_crs"
+          assert old_import in text
+          text = text.replace(old_import, new_import, 1)
+          marker = """def test_det_jump_sigma_clipping():
+          """
+          test = """def test_sigma_clipping_uses_nan_safe_mad():
+              nints, ngroups, nrows, ncols = 1, 11, 2, 2
+              gdq = np.zeros((nints, ngroups, nrows, ncols), dtype=np.uint32)
+              first_diffs = np.zeros((nints, ngroups - 1, nrows, ncols), dtype=np.float32)
+              first_diffs[0, :, 0, 0] = [-1.0, -0.8, -0.5, -0.2, 0.2, 0.5, 0.8, np.nan, 10.0, 10.0]
+              first_diffs_finite = np.isfinite(first_diffs)
+              twopt_p = sigclip_twopt_p()
+              twopt_p.normal_rej_thresh = 3.0
+              twopt_p.only_use_ints = False
+
+              out_gdq = det_jump_sigma_clipping(
+                  gdq,
+                  nints,
+                  ngroups,
+                  ngroups,
+                  first_diffs_finite,
+                  first_diffs,
+                  twopt_p,
+              )
+
+              jump = DQFLAGS[\"JUMP_DET\"]
+              assert out_gdq[0, 9, 0, 0] == jump
+              assert out_gdq[0, 10, 0, 0] == jump
+              assert out_gdq[0, 8, 0, 0] == 0
+
+
+          """
+          assert marker in text
+          path.write_text(text.replace(marker, test + marker, 1))
+          PY
+          python -m pytest -q tests/test_jump_twopoint_difference.py
+          git config user.name "Sylvester Kaczmarek"
+          git config user.email "16242628+sylvesterkaczmarek@users.noreply.github.com"
+          git add src/stcal/jump/twopoint_difference.py tests/test_jump_twopoint_difference.py
+          git commit -m "Use nan-safe MAD for jump sigma clipping"
+          git push --force origin HEAD:refs/heads/fix-rtn-mad-sigma-clipping
