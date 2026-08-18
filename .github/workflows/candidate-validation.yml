@@ -1,0 +1,112 @@
+name: candidate validation
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  single-resultant-linearity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Reset to upstream baseline
+        run: git reset --hard a0bee58c9c564de977a2ece4134f40c50fa495b2
+      - name: Install test environment
+        run: python -m pip install -e '.[test]'
+      - name: Apply fix and test
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/stcal/linearity/linearity.py')
+          s = p.read_text()
+          old = '''    # If no inverse linearity coefficients, do simple correction in place
+    if ilin_coeffs is None:
+'''
+          new = '''    # Use the simple correction when inverse coefficients are unavailable or
+    # when there is only one resultant and no slope can be estimated.
+    if ilin_coeffs is None or ngroups == 1:
+'''
+          if old not in s:
+              raise RuntimeError('Expected source block not found')
+          p.write_text(s.replace(old, new, 1))
+
+          t = Path('tests/test_linearity.py')
+          s = t.read_text()
+          s += '''\n\ndef test_read_level_correction_single_resultant():\n    nints, ngroups, nrows, ncols = 1, 1, 1, 1\n    data = np.full((nints, ngroups, nrows, ncols), 10.0, dtype=np.float32)\n    gdq = np.zeros_like(data, dtype=np.uint32)\n    pdq = np.zeros((nrows, ncols), dtype=np.uint32)\n    lin_dq = np.zeros((nrows, ncols), dtype=np.uint32)\n\n    lin_coeffs = np.zeros((3, nrows, ncols), dtype=np.float32)\n    lin_coeffs[:, 0, 0] = [0.0, 1.0, 0.01]\n    ilin_coeffs = np.zeros((3, nrows, ncols), dtype=np.float32)\n    ilin_coeffs[:, 0, 0] = [0.0, 1.0, -0.01]\n\n    corrected, _, _ = linearity_correction(\n        data, gdq, pdq, lin_coeffs, lin_dq, DQFLAGS,\n        ilin_coeffs=ilin_coeffs, read_pattern=[[1]],\n        satval=np.full((nrows, ncols), 65000.0, dtype=np.float32),\n    )\n\n    assert corrected[0, 0, 0, 0] == np.float32(11.0)\n'''
+          t.write_text(s)
+          PY
+          python -m pytest -q tests/test_linearity.py
+      - name: Push clean branch
+        if: success()
+        run: |
+          git config user.name 'Sylvester Kaczmarek'
+          git config user.email '16242628+sylvesterkaczmarek@users.noreply.github.com'
+          git checkout -B fix-linearity-single-resultant
+          git add src/stcal/linearity/linearity.py tests/test_linearity.py
+          git commit -m 'Handle single-resultant inverse linearity inputs'
+          git push --force origin fix-linearity-single-resultant
+
+  resample-runtime-invariants:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Reset to upstream baseline
+        run: git reset --hard a0bee58c9c564de977a2ece4134f40c50fa495b2
+      - name: Install test environment
+        run: python -m pip install -e '.[test]' ruff
+      - name: Apply fix and test
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/stcal/resample/resample.py')
+          s = p.read_text()
+          replacements = {
+            '''        assert self._output_wcs is not None  # noqa: S101
+        assert np.array_equiv(self._output_wcs.array_shape, self._output_array_shape)  # noqa: S101
+        assert self._output_pixel_scale  # noqa: S101
+''': '''        if self._output_wcs is None:
+            raise RuntimeError("Output WCS is not initialized.")
+        if not np.array_equiv(self._output_wcs.array_shape, self._output_array_shape):
+            raise RuntimeError("Output WCS array shape changed after resampler initialization.")
+        if not self._output_pixel_scale:
+            raise RuntimeError("Output pixel scale is not initialized.")
+''',
+            '''        # TODO: do we need this to just raise a custom
+        assert isinstance(model, dict)  # noqa: S101
+''': '''        if not isinstance(model, dict):
+            raise TypeError(f"Input model must be a dictionary, got {type(model).__name__}.")
+''',
+            '''        assert self._n_res_models  # noqa: S101
+''': '''        if not self._n_res_models:
+            raise RuntimeError("Cannot finalize time information before resampling any input models.")
+''',
+          }
+          for old, new in replacements.items():
+              if old not in s:
+                  raise RuntimeError(f'Expected source block not found: {old!r}')
+              s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+          ruff check src/stcal/resample/resample.py --select S101
+          python -m pytest -q tests/resample
+      - name: Push clean branch
+        if: success()
+        run: |
+          git config user.name 'Sylvester Kaczmarek'
+          git config user.email '16242628+sylvesterkaczmarek@users.noreply.github.com'
+          git checkout -B fix-resample-runtime-invariants
+          git add src/stcal/resample/resample.py
+          git commit -m 'Replace resample runtime asserts with exceptions'
+          git push --force origin fix-resample-runtime-invariants
