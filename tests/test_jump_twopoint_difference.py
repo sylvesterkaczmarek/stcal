@@ -1,6 +1,6 @@
 import numpy as np
 
-from stcal.jump.twopoint_difference import find_crs
+from stcal.jump.twopoint_difference import find_crs, flag_four_neighbors
 from stcal.jump.twopoint_difference_class import TwoPointParams
 
 DQFLAGS = {"JUMP_DET": 4, "SATURATED": 2, "DO_NOT_USE": 1}
@@ -84,6 +84,38 @@ def uneven_resultant_twopt_p(read_times, rej=3, _1drej=3, _3drej=3, _4n=False, m
     twopt_p.n_reads_groupdiff = n_reads_group[1:] + n_reads_group[:-1]
 
     return twopt_p
+
+
+def test_four_neighbor_flagging_uses_jump_amplitude():
+    nints, ngroups, nrows, ncols = 1, 2, 5, 5
+    gdq = np.zeros((nints, ngroups, nrows, ncols), dtype=np.uint32)
+    first_diffs = np.zeros((nints, ngroups - 1, nrows, ncols), dtype=np.float32)
+    first_diffs[0, 0, 2, 2] = 20.0
+    median_diffs = np.zeros((nrows, ncols), dtype=np.float32)
+    sigma = np.ones((1, nrows, ncols), dtype=np.float32)
+    row_below_gdq = np.zeros((nints, ngroups, ncols), dtype=np.uint8)
+    row_above_gdq = np.zeros_like(row_below_gdq)
+    twopt_p = default_twopt_p(_4n=True, mx_flag=200, mn_flag=10)
+
+    out_gdq, _, _ = flag_four_neighbors(
+        gdq,
+        nints,
+        ngroups,
+        first_diffs,
+        median_diffs,
+        sigma,
+        row_below_gdq,
+        row_above_gdq,
+        twopt_p,
+    )
+
+    expected = np.zeros((nrows, ncols), dtype=np.uint32)
+    expected[2, 2] = DQFLAGS["JUMP_DET"]
+    expected[1, 2] = DQFLAGS["JUMP_DET"]
+    expected[3, 2] = DQFLAGS["JUMP_DET"]
+    expected[2, 1] = DQFLAGS["JUMP_DET"]
+    expected[2, 3] = DQFLAGS["JUMP_DET"]
+    np.testing.assert_array_equal(out_gdq[0, 1], expected)
 
 
 def test_uneven_groups():

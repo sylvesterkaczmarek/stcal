@@ -534,11 +534,8 @@ def flag_four_neighbors(
                 sig = sigma[j]
 
             ratio = np.abs(first_diffs[i, j] - median_diffs) / sig
-            jump_set = gdq[i, j + 1] & twopt_p.fl_jump != 0
-            flag = (
-                (ratio < twopt_p.max_jump_to_flag_neighbors)
-                & (ratio > twopt_p.min_jump_to_flag_neighbors)
-                & (jump_set)
+            flag = (ratio < twopt_p.max_jump_to_flag_neighbors) & (
+                ratio > twopt_p.min_jump_to_flag_neighbors
             )
 
             # Dilate the flag by one pixel in each direction.
