@@ -229,6 +229,16 @@ def test_find_simple_ellipse():
     assert (ellipse[0]["cen_x"], ellipse[0]["cen_y"]) == pytest.approx((2.5, 2.0))  # center
 
 
+def test_find_single_pixel_ellipse():
+    plane = np.zeros(shape=(3, 3), dtype=np.uint8)
+    plane[1, 1] = JUMP
+    ellipse = find_ellipses(plane, JUMP, 1)[0]
+
+    assert (ellipse["cen_x"], ellipse["cen_y"]) == (1, 1)
+    assert ellipse["minor_axis"] == 1
+    assert ellipse["major_axis"] == 1
+
+
 def test_find_ellipse2():
     plane = np.zeros(shape=(5, 5), dtype=np.uint8)
     plane[1, :] = [0, JUMP, JUMP, JUMP, 0]
@@ -238,8 +248,8 @@ def test_find_ellipse2():
     ellipse = ellipses[0]
     assert ellipse["cen_x"] == 2
     assert ellipse["cen_y"] == 2
-    assert ellipse["minor_axis"] == pytest.approx(2.266, 1e-3)
-    assert ellipse["major_axis"] == pytest.approx(2.266, 1e-3)
+    assert ellipse["minor_axis"] == pytest.approx(3.266, 1e-3)
+    assert ellipse["major_axis"] == pytest.approx(3.266, 1e-3)
     assert ellipse["theta_deg"] == pytest.approx(-45, 1)
 
 

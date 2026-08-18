@@ -1278,8 +1278,12 @@ def _sk_filter_areas(image, threshold):
         # Wait until after area check so calculating the more expensive
         # region properties is only done for areas that pass threshold.
         # https://scikit-image.org/docs/stable/auto_examples/segmentation/plot_regionprops.html#measure-region-properties
-        w = region.axis_major_length - 1
-        h = region.axis_minor_length - 1
+        w = region.axis_major_length
+        h = region.axis_minor_length
+        if w == 0:
+            w = 1
+        if h == 0:
+            h = 1
         min_areas.append(
             (float(region.centroid[1]), float(region.centroid[0]), h, w, np.degrees(region.orientation))
         )
