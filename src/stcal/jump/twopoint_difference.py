@@ -3,6 +3,7 @@ import warnings
 
 import numpy as np
 from astropy import stats
+from astropy.stats import mad_std
 from astropy.utils.exceptions import AstropyUserWarning
 
 log = logging.getLogger(__name__)
@@ -437,7 +438,13 @@ def det_jump_sigma_clipping(gdq, nints, ngroups, total_groups, first_diffs_finit
 
         axis = 0 if twopt_p.only_use_ints else (0, 1)
         clipped_diffs, allow, ahigh = stats.sigma_clip(
-            first_diffs, sigma=twopt_p.normal_rej_thresh, axis=axis, masked=True, return_bounds=True
+            first_diffs,
+            sigma=twopt_p.normal_rej_thresh,
+            axis=axis,
+            masked=True,
+            return_bounds=True,
+            cenfunc="median",
+            stdfunc=lambda data, axis=None: mad_std(data, axis=axis, ignore_nan=True),
         )
 
         # get the standard deviation from the bounds of sigma clipping

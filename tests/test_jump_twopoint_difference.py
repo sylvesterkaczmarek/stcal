@@ -1,6 +1,6 @@
 import numpy as np
 
-from stcal.jump.twopoint_difference import find_crs
+from stcal.jump.twopoint_difference import det_jump_sigma_clipping, find_crs
 from stcal.jump.twopoint_difference_class import TwoPointParams
 
 DQFLAGS = {"JUMP_DET": 4, "SATURATED": 2, "DO_NOT_USE": 1}
@@ -895,6 +895,32 @@ def set_sigma_clip_data(data):
         for col in range(ncols):
             data[:, :, row, col] = base_arr
     return data
+
+
+def test_sigma_clipping_uses_nan_safe_mad():
+    nints, ngroups, nrows, ncols = 1, 11, 2, 2
+    gdq = np.zeros((nints, ngroups, nrows, ncols), dtype=np.uint32)
+    first_diffs = np.zeros((nints, ngroups - 1, nrows, ncols), dtype=np.float32)
+    first_diffs[0, :, 0, 0] = [-1.0, -0.8, -0.5, -0.2, 0.2, 0.5, 0.8, np.nan, 10.0, 10.0]
+    first_diffs_finite = np.isfinite(first_diffs)
+    twopt_p = sigclip_twopt_p()
+    twopt_p.normal_rej_thresh = 3.0
+    twopt_p.only_use_ints = False
+
+    out_gdq = det_jump_sigma_clipping(
+        gdq,
+        nints,
+        ngroups,
+        ngroups,
+        first_diffs_finite,
+        first_diffs,
+        twopt_p,
+    )
+
+    jump = DQFLAGS["JUMP_DET"]
+    assert out_gdq[0, 9, 0, 0] == jump
+    assert out_gdq[0, 10, 0, 0] == jump
+    assert out_gdq[0, 8, 0, 0] == 0
 
 
 def test_det_jump_sigma_clipping():
