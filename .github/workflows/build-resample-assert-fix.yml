@@ -1,0 +1,112 @@
+name: Build resample assert fix
+
+on:
+  push:
+    branches:
+      - replace-resample-asserts-build
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Build fix on clean contribution branch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git fetch origin replace-resample-asserts
+          git checkout -B replace-resample-asserts origin/replace-resample-asserts
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/stcal/resample/resample.py')
+          text = path.read_text()
+          replacements = {
+              '        assert self._output_wcs is not None  # noqa: S101\n':
+              '        if self._output_wcs is None:\n'
+              '            raise RuntimeError("Output WCS is not configured.")\n',
+              '        assert np.array_equiv(self._output_wcs.array_shape, self._output_array_shape)  # noqa: S101\n':
+              '        if not np.array_equiv(self._output_wcs.array_shape, self._output_array_shape):\n'
+              '            raise RuntimeError("Output WCS array shape does not match the configured output shape.")\n',
+              '        assert self._output_pixel_scale  # noqa: S101\n':
+              '        if not self._output_pixel_scale:\n'
+              '            raise RuntimeError("Output pixel scale is not configured.")\n',
+              '        # TODO: do we need this to just raise a custom\n        assert isinstance(model, dict)  # noqa: S101\n':
+              '        if not isinstance(model, dict):\n'
+              '            raise TypeError(f"Input model must be a dictionary, got {type(model).__name__}.")\n',
+              '        assert self._n_res_models  # noqa: S101\n':
+              '        if not self._n_res_models:\n'
+              '            raise RuntimeError("Cannot finalize exposure times before any models have been resampled.")\n',
+          }
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f'Expected source text not found: {old!r}')
+              text = text.replace(old, new, 1)
+          path.write_text(text)
+          PY
+          cat > tests/test_resample_runtime_validation.py <<'PY'
+          from types import SimpleNamespace
+
+          import pytest
+
+          from stcal.resample.resample import Resample
+
+
+          def bare_resampler():
+              return object.__new__(Resample)
+
+
+          def test_create_output_model_requires_wcs():
+              resampler = bare_resampler()
+              resampler._output_wcs = None
+              with pytest.raises(RuntimeError, match="Output WCS is not configured"):
+                  resampler.create_output_model()
+
+
+          def test_create_output_model_requires_consistent_shape():
+              resampler = bare_resampler()
+              resampler._output_wcs = SimpleNamespace(array_shape=(2, 2))
+              resampler._output_array_shape = (3, 3)
+              with pytest.raises(RuntimeError, match="array shape does not match"):
+                  resampler.create_output_model()
+
+
+          def test_create_output_model_requires_pixel_scale():
+              resampler = bare_resampler()
+              resampler._output_wcs = SimpleNamespace(array_shape=(2, 2))
+              resampler._output_array_shape = (2, 2)
+              resampler._output_pixel_scale = None
+              with pytest.raises(RuntimeError, match="Output pixel scale is not configured"):
+                  resampler.create_output_model()
+
+
+          def test_validate_input_model_rejects_non_mapping():
+              resampler = bare_resampler()
+              with pytest.raises(TypeError, match="Input model must be a dictionary"):
+                  resampler.validate_input_model([])
+
+
+          def test_finalize_time_info_requires_resampled_models():
+              resampler = bare_resampler()
+              resampler._n_res_models = 0
+              with pytest.raises(RuntimeError, match="before any models have been resampled"):
+                  resampler.finalize_time_info()
+          PY
+          python -m pip install -e '.[test]'
+          python -m pytest -q tests/test_resample_runtime_validation.py
+          python -m pytest -q tests/test_resample.py
+          python -m ruff check src/stcal/resample/resample.py tests/test_resample_runtime_validation.py
+          git config user.name 'Sylvester Kaczmarek'
+          git config user.email '16242628+sylvesterkaczmarek@users.noreply.github.com'
+          git add src/stcal/resample/resample.py tests/test_resample_runtime_validation.py
+          git commit -m 'Replace resample runtime asserts with explicit errors'
+          git push origin replace-resample-asserts
