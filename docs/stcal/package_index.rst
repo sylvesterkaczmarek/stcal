@@ -4,6 +4,7 @@ Package Index
 .. toctree::
    :maxdepth: 2
 
+   dark_current/index.rst
    jump/index.rst
    ramp_fitting/index.rst
    alignment/index.rst
