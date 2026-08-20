@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use stcal in your research, please cite the software using this metadata."
+title: "stcal"
+type: software
+authors:
+  - name: "Space Telescope Science Institute"
+repository-code: "https://github.com/spacetelescope/stcal"
+url: "https://stcal.readthedocs.io/"
+license: BSD-3-Clause
